@@ -1,0 +1,29 @@
+{
+  "name": "multiplayerwordle",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "nodemon server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Overdue21/MultiplayerWordle.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Overdue21/MultiplayerWordle/issues"
+  },
+  "homepage": "https://github.com/Overdue21/MultiplayerWordle#readme",
+  "dependencies": {
+    "express": "^4.17.3",
+    "react": "^17.0.2",
+    "socket.io": "^4.4.1",
+    "socket.io-client": "^4.4.1"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.15"
+  }
+}
