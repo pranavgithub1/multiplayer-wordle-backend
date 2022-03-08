@@ -30,6 +30,7 @@ let finishedCnt = 0;
 let curPlayers = 0;
 
 let connectedSocketIds = [];
+
 io.on('connection', async socket => {
   let connectedSockets = await io.fetchSockets();
   console.log(payload.master);
@@ -108,3 +109,14 @@ const setNewMaster = () => {
 server.listen(3001, () => {
   console.log('listening on *:3001')
 });
+
+
+class Player {
+  constructor(socketid, username, score, inGame, isMaster){
+    this.socketid = socketid;
+    this.username = username;
+    this.score = score;
+    this.inGame = inGame;
+    this.isMaster = isMaster;
+  }
+}
