@@ -12,98 +12,138 @@ const io = socketio(server, {
   }
 })
 
-// app.use(express.static(path.join(__dirname,'../build')))
 
-let payload = {
-  users: {},
-  scoreBoard: {},
-  master: ''
-}
-// users { socket-id -> username }
-// scoreboard { socket-id -> score }
-// status {socket-id -> status}
-// currentMaster - socket-id
+
 let masterIndex = 0;
-let answer = '';
+let master; // type = Player
+
 // these variables are specific to the current game
-let finishedCnt = 0;
-let curPlayers = 0;
+let gameOngoing = false;
+let currentGame = {
+  answer: '',
+  players: [], // list of Player objs
+  finishedCnt: 0,
+}
 
-let connectedSocketIds = [];
+let playerList = [];
+let playerMap = {}; // socket_id -> Player object
 
-io.on('connection', async socket => {
-  let connectedSockets = await io.fetchSockets();
-  console.log(payload.master);
-  connectedSocketIds.push(socket.id);
-  socket.on('join-room', async (username) => {
+io.on('connection', socket => {
+  
+  console.log(master);
+
+  socket.on('join-room', (username) => {
     console.log('connection', username, socket.id);
-    payload.users[socket.id] = username;
-    payload.scoreBoard[socket.id] = 0;
-    io.sockets.emit('scoreboard-update', payload);
+
+    // Add new player to server side data
+    let newPlayer = new Player(socket.id, username, 0, false, false);
+    playerList.push(newPlayer);
+    playerMap[socket.id] = newPlayer;
+
+    // Give the new client the data it needs
+    socket.emit('room-data', {
+      playerList: playerList,
+      playerMap: playerMap,
+      master: master
+    });
+
+    // Tell all other sockets new player just joined
+    socket.broadcast.emit('new-player', newPlayer);
 
     // if connected socket is the only one in the room, name it the master
-    if(connectedSockets.length === 1){
+    if(playerList.length === 1){
       console.log("first player");
-      payload.master = socket.id;
-      io.sockets.emit('scoreboard-update', payload);
+      master = newPlayer;
+      io.sockets.emit('new-master', master);
     }
   });
 
-  socket.on('new-word', async (new_word) => {
+  socket.on('new-word', (new_word) => {
     // dont start a game with only one player
-    let playerCnt = (await io.fetchSockets()).length;
-    if(playerCnt === 1) return;
+    if(playerList.length === 1) return;
 
-    // game start
-    answer = new_word;
-    finishedCnt = 0;
-    // get all sockets at the time of game start
-    curPlayers = await io.fetchSockets();
-    console.log('new game', curPlayers.length, answer)
-    io.sockets.emit('game-start', answer);
+    
+    // initialize game variables
+    gameOngoing = true;
+    currentGame.answer = new_word;
+    currentGame.finishedCnt = 0;
+    currentGame.players = [...playerList];
+    playerList.forEach(player => player.inGame = true);
+    console.log("NEW GAME", currentGame);
+    io.sockets.emit('game-start', currentGame.answer);
   });
 
   socket.on('wordle-solved', (point) => {
-    payload.scoreBoard[socket.id] += point;
-    finishedCnt++;
-    io.sockets.emit('scoreboard-update', payload);
-    // everyone solved, game over
-    if(finishedCnt === curPlayers.length - 1){
+    // Increment player score and finished count
+    currentGame.finishedCnt++;
+    playerMap[socket.id].score += point;
+    playerMap[socket.id].inGame = false;
+    io.sockets.emit('scoreboard-update', {
+      scorer: socket.id,
+      point: point
+    });
+
+    // everyone solved, game over ; set a new master
+    if(currentGame.finishedCnt === currentGame.players.length - 1){
       io.sockets.emit('game-over');
+      gameOngoing = false;
       setNewMaster();
-      console.log('new master', payload.master, payload.users[payload.master]);
-      io.sockets.emit('scoreboard-update', payload);
+      console.log('new master', master.username);
+      io.sockets.emit('new-master', master);
     }
   });
 
 
   socket.on('disconnect', async () => {
-    console.log('disconnection',payload.users[socket.id], socket.id);
-    delete payload.users[socket.id];
-    delete payload.scoreBoard[socket.id];
-    connectedSocketIds = connectedSocketIds.filter(id => id !== socket.id);
+    if(!playerMap.hasOwnProperty(socket.id)) return;
+    console.log('disconnection', playerMap[socket.id].username);
 
-    // master left ; reset master and game
-    if(socket.id === payload.master){
+    io.sockets.emit('player-left', playerMap[socket.id]);
+    
+    // last person in room leaves
+    let connectedSocketCount = (await io.fetchSockets()).length;
+    if(connectedSocketCount === 0){
+      console.log("last in room left");
+      master = null;
+      playerList = [];
+      playerMap = {};
+      return;
+    }
+
+    // master left -> reset game
+    if(socket.id === master.socketid){
       io.sockets.emit('game-over');
+      gameOngoing = false;
       setNewMaster();
-      console.log('new master', payload.master, payload.users[payload.master]);
-      io.sockets.emit('scoreboard-update', payload);
+      console.log('new master', master.username);
+      io.sockets.emit('new-master', master);
     }
-    // 2nd to last player leaves ; 1 player left
-    let playerCnt = (await io.fetchSockets()).length;
-    if(playerCnt === 1){
-      console.log("second to last left");
-      io.sockets.emit('game-over');
+
+    // player in current game leaves -> remove them from currentGame variables
+    if(playerMap[socket.id].inGame){
+      console.log("gaming player left");
+      currentGame.players = currentGame.players.filter(player => player.socketid !== socket.id);
+
+      // Everyone in current game left but the master -> reset Game
+      if(currentGame.players.length === 1){
+        io.sockets.emit('game-over');
+        gameOngoing = false;
+        setNewMaster();
+        console.log('new master', master.username);
+        io.sockets.emit('new-master', master);
+      }
     }
-    io.sockets.emit('scoreboard-update', payload);
+    
+    // Remove disconnected player from playerList
+    playerList = playerList.filter(player => player.socketid !== socket.id);
+    delete playerMap[socket.id];
   });
 })
 
 const setNewMaster = () => {
   masterIndex++;
-  if(masterIndex >= connectedSocketIds.length) masterIndex = 0;
-  payload.master = connectedSocketIds[masterIndex];
+  if(masterIndex >= playerList.length) masterIndex = 0;
+  master = playerList[masterIndex];
 }
 
 server.listen(3001, () => {
