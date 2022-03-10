@@ -23,6 +23,7 @@ let currentGame = {
   answer: '',
   players: [], // list of Player objs
   finishedCnt: 0,
+  guessingCnt: 0,
 }
 
 let playerList = [];
@@ -67,24 +68,32 @@ io.on('connection', socket => {
     gameOngoing = true;
     currentGame.answer = new_word;
     currentGame.finishedCnt = 0;
+    currentGame.guessingCnt = playerList.length - 1;
     currentGame.players = [...playerList];
     playerList.forEach(player => player.inGame = true);
     console.log("NEW GAME", currentGame);
+    console.log("guessint cnt: ", currentGame.guessingCnt)
     io.sockets.emit('game-start', currentGame.answer);
   });
 
   socket.on('wordle-solved', (point) => {
     // Increment player score and finished count
     currentGame.finishedCnt++;
+    currentGame.guessingCnt--;
     playerMap[socket.id].score += point;
+    console.log("wordle solved", playerMap[socket.id].username, playerMap[socket.id].score, point);
     playerMap[socket.id].inGame = false;
+
+    // remove the player who just solved from the current game
+    // currentGame.players = currentGame.players.filter(player => player.socketid !== socket.id);
+
     io.sockets.emit('scoreboard-update', {
       scorer: socket.id,
       point: point
     });
 
     // everyone solved, game over ; set a new master
-    if(currentGame.finishedCnt === currentGame.players.length - 1){
+    if(currentGame.guessingCnt === 0){
       io.sockets.emit('game-over');
       gameOngoing = false;
       setNewMaster();
@@ -100,15 +109,38 @@ io.on('connection', socket => {
 
     io.sockets.emit('player-left', playerMap[socket.id]);
     
-    // last person in room leaves
+    let disconnectedPlayer = playerMap[socket.id];
+
+    // Remove disconnected player from playerList
+    playerList = playerList.filter(player => player.socketid !== socket.id);
+    delete playerMap[socket.id];
+
+    // last person in room leaves -> reset all server state
     let connectedSocketCount = (await io.fetchSockets()).length;
     if(connectedSocketCount === 0){
       console.log("last in room left");
       master = null;
       playerList = [];
       playerMap = {};
+      masterIndex = 0;
+      gameOngoing = false;
+      currentGame.answer = '';
+      currentGame.finishedCnt = 0;
+      currentGame.players = [];
+      currentGame.guessingCnt = 0;
       return;
     }
+
+    // 2nd to last person in room leaves -> waiting state
+    // if(connectedSocketCount === 1) {
+    //   io.sockets.emit('game-over');
+    //   gameOngoing = false;
+    //   setNewMaster();
+    //   console.log('new master', master.username);
+    //   io.sockets.emit('new-master', master);
+    //   return;
+    // }
+
 
     // master left -> reset game
     if(socket.id === master.socketid){
@@ -120,12 +152,14 @@ io.on('connection', socket => {
     }
 
     // player in current game leaves -> remove them from currentGame variables
-    if(playerMap[socket.id].inGame){
+    if(disconnectedPlayer.inGame){
       console.log("gaming player left");
+      console.log(currentGame.guessingCnt);
       currentGame.players = currentGame.players.filter(player => player.socketid !== socket.id);
+      currentGame.guessingCnt--;
 
       // Everyone in current game left but the master -> reset Game
-      if(currentGame.players.length === 1){
+      if(currentGame.guessingCnt === 0){
         io.sockets.emit('game-over');
         gameOngoing = false;
         setNewMaster();
@@ -134,9 +168,6 @@ io.on('connection', socket => {
       }
     }
     
-    // Remove disconnected player from playerList
-    playerList = playerList.filter(player => player.socketid !== socket.id);
-    delete playerMap[socket.id];
   });
 })
 
